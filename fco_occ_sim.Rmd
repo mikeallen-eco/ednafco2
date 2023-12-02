@@ -1,0 +1,527 @@
+# libraries
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+# specify the model
+```{r}
+sink("JAGS/fco_occ_mod.txt")
+cat("
+model {
+
+# Priors
+mean.p ~ dunif(0, 1)          # Detection intercept on prob. scale
+alpha0 <- logit(mean.p)       #   same on logit scale
+mean.psi ~ dunif(0, 1)        # Occupancy intercept on prob. scale
+beta0 <- logit(mean.psi)      #   same on logit scale
+for(k in 1:1){                # 1:K terms in detection model
+   alpha[k] ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+}
+for(k in 1:1){               # 1:K terms in occupancy model
+   beta[k] ~ dnorm(0, 0.1)    # Covariates on logit(occupancy)
+}
+
+# Likelihood
+for (i in 1:M) {
+  z[i] ~ dbern(psi[i])
+  logit(psi[i]) <- beta0 + inprod(beta[], occDM[i,])  
+   for (j in 1:J) {
+      y[i,j] ~ dbern(z[i] * p[i,j]) 
+      logit(p[i,j]) <- alpha0 +     # detection (p) intercept
+         inprod(alpha[], occDM[i,])    
+   }
+}
+
+p.y1 <- mean.p
+logit(p.y2) <- alpha0 + alpha[1]
+
+psi.y1 <- mean.psi
+logit(psi.y2) <- beta0 + beta[1]
+
+}
+",fill = TRUE)
+sink()
+```
+
+# SIMULATE 1 YEAR OF 3-VISIT DETECTION / NON-DETECTION AT n.sites SITES
+WITH ONE COVARIATE FOR PSI AND ONE FOR P
+```{r}
+
+sampsim <- function(n.sites = 50, J = 3, psi.y1, chg, chgdir, p0, p.chg, p.chgdir, seed = 100,
+                    iter = 10000, thin = 5, chains = 3, n.warmup = 2000) {
+  
+# Choose sample sizes and prepare obs. data array y
+# n.sites <- 60                      # Number of sites
+# J <-  3                        # Number of presence/absence measurements
+# psi.y1 <- 0.2 # psi intercept on probability scale (psi when covariates = 0)
+# chg <- 0.1 # psi change from year 1 to year 2 (= inverse logit beta1)
+# chgdir <- -1 # -1, 0, or 1 for decrease, no change, or increase
+# p0 <- 0.4 # mean detection probability in Allen et al., Sci. Reports. (2023); range: .1-.7
+# p.chg <- 0 # p change from year 1 to year 2 (= inverse logit alpha1)
+# p.chgdir <- 0 # -1, 0, or 1 for decrease, no change, or increase
+# seed = 440
+# ni <- 20000   ;   nt <- 10   ;   nb <- 10000   ;   nc <- 3
+
+message(paste0("Starting iteration ", i, "..."))
+
+# set up total number of rows (sites x years)
+n.sites2 <- n.sites*2
+
+# set up matrix for detection/non-detection data
+y1 <-
+  matrix(NA, nrow = n.sites2, ncol = J) # to contain the obs. data, year 1
+
+# Create a covariate called per
+set.seed(seed)
+year <- c(rep(0, n.sites), rep(1, n.sites)) 
+# runif(n.sites,-1, 1)
+
+# Choose parameter values for occupancy model and compute occupancy
+beta0 <- log(psi.y1/(1-psi.y1))   # prob that a site occupied in year 1; Logit-scale intercept
+beta1 <- log(chg/(1-chg))
+psi <- (plogis(beta0) + chgdir*plogis(beta1)*year) # Occupancy probability
+# plot(vegHt, psi, ylim = c(0,1), lwd = 3) # Plot psi relationship
+
+# Now visit each site and observe presence/absence perfectly
+set.seed(seed+50)
+z1 <- rbinom(n.sites2, 1, psi)     
+    # True presence/absence year 1 & 2
+
+# Look at data so far
+table(z1[1:n.sites])
+
+table(z1[n.sites:(2*n.sites)])
+
+# # Create a covariate called wind
+# set.seed(560)
+# wind1 <- array(runif(n.sites * J,-1, 1), dim = c(n.sites, J))
+
+# Choose parameter values for measurement error model and compute detectability
+alpha0 <- log(p0/(1-p0))                        # Logit-scale intercept
+alpha1 <- log(p.chg/(1-p.chg))        # Logit-scale slope for p cov
+if(is.na(alpha1)){alpha1 <- 0}
+
+p1 <- (plogis(alpha0) + p.chgdir*plogis(alpha1)*year) # Detection probability
+
+#plot(p1 ~ wind1, ylim = c(0,1))     # Look at relationship
+
+# Take J presence/absence measurements at each site in each year
+set.seed(seed)
+for (j in 1:J) {
+  y1[, j] <- rbinom(n.sites2, z1, p1[j])
+}
+
+# look at proportion of observed presence / number of sites
+sum(apply(y1, 1, max)) / n.sites2
+
+# FORMAT DATA FOR SINGLE SEASON OCCUPANCY MODEL
+
+# Create design matrix for occupancy covariates and look at it
+occDM_t <- model.matrix(~ 1 + year)[,-1] # Drop first col.
+
+y = y1
+
+# Bundle and summarize data set
+win.data_t <- list(y = y, M = nrow(y), J = ncol(y), occDM = as.data.frame(occDM_t))
+
+# Inits
+inits <- function(){list(z = apply(y, 1, max, na.rm = T), mean.psi = runif(1), mean.p = runif(1), alpha = c(-2) + rnorm(1), beta = (c(2)+rnorm(1)))}
+
+# Parameters monitored
+params <- c("alpha0", "alpha", "beta0", "beta", "psi.y1", "psi.y2", "p.y1", "p.y2")
+
+# MCMC settings
+# ni <- 20000   ;   nt <- 10   ;   nb <- 10000   ;   nc <- 3
+ni <- iter; nt <- thin; nc <- chains
+
+# Call JAGS from R and summarize posteriors
+mod <- jagsUI::jags(win.data_t, inits, params, "JAGS/fco_occ_mod.txt", 
+                    n.chains = nc, n.thin = nt, n.iter = ni, 
+                    n.adapt = n.warmup, parallel = TRUE, verbose = F)
+# jagsUI::traceplot(mod)
+
+message(paste0("psi.y1 = ", round(mod$mean$psi.y1,3), ". psi.y2 = ", 
+               round(mod$mean$psi.y2,3), ". maxRhat = ", round(max(bind_rows(mod$Rhat)),3)))
+return(mod)
+
+}
+
+psi.y1.list <- list()
+psi.y2.list <- list()
+max.Rhat.list <- list()
+
+for (i in 1:10) {
+mod <- sampsim(n.sites = 500, J = 4, psi.y1 = 0.5, chg = 0.15, chgdir = -1, 
+               p0 = 0.4, p.chg = 0, p.chgdir = 0, seed = 100+i,
+               iter = 5000)
+psi.y1.list[[i]] <- data.frame(psi.y1 = mod$sims.list$psi.y1)
+psi.y2.list[[i]] <- data.frame(psi.y2 = mod$sims.list$psi.y2)
+max.Rhat.list[[i]] <- data.frame(max.Rhat = max(do.call(rbind, mod$Rhat)))
+}
+
+df <- data.frame(
+psi.y1.df = bind_rows(psi.y1.list),
+psi.y2.df = bind_rows(psi.y2.list),
+max.Rhat.df = bind_rows(max.Rhat.list)
+) %>%
+  mutate(chg = psi.y2-psi.y1)
+
+hist(df$chg)
+quantile(df$chg, c(0.05, 0.5, 0.95))
+quantile(df$psi.y1, c(0.05, 0.5, 0.95))
+quantile(df$psi.y2, c(0.05, 0.5, 0.95))
+
+```
+
+# Figure - p.time (60 and 40) - Trial A
+```{r}
+p.60a <- apply(tapaculo_60d$sims.list$p.time, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+p.40a <- apply(tapaculo_40a$sims.list$p.time, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+p.60a.plot <-
+  data.frame(
+    p.60a,
+    time = seq(min(wind1), max(wind1), length.out = 50)) %>%
+  mutate(n = "n=60")
+colnames(p.60a.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "timeofday", "n") 
+
+p.40a.plot <-
+  data.frame(
+    p.40a,
+    time = seq(min(wind1), max(wind1), length.out = 50)) %>%
+  mutate(n = "n=40")
+colnames(p.40a.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "timeofday", "n")
+
+runA_compare.plot <- p.60a.plot %>%
+  bind_rows(p.40a.plot)
+
+true.p = data.frame(
+time = seq(min(wind1),max(wind1),length.out = 50)) %>%
+  mutate(true = 100*plogis(time*(-2)))
+
+ggplot(runA_compare.plot) +
+  geom_ribbon(aes(x = timeofday, ymin = p2.75*100, ymax = p97.5*100, group = n),
+              fill = "steelblue",
+              alpha = 0.3) +
+  geom_ribbon(aes(x = timeofday, ymin = p10*100, ymax = p90*100),
+              fill = "steelblue",
+              alpha = 0.3) +
+  geom_line(aes(x = timeofday, y = p50*100), color = "steelblue", size = 2) +
+  geom_line(data = true.p, aes(x = time, y = true)) +
+  facet_wrap(~n) +
+  labs(x = "Time", y = "Detection probability (%)") +
+  theme_bw() +
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+#ggsave("figures/tapaculo_p_compare_trialA.png", width = 7, height = 5)
+```
+# Figure - psi.wetland (n = 60 and 40) - Trial A
+```{r}
+psi.60a <- apply(tapaculo_60a$sims.list$psi.wetland, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+psi.40a <- apply(tapaculo_40a$sims.list$psi.wetland, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+psi.60a.plot <-
+  data.frame(
+    psi.60a,
+    time = seq(min(vegHt), max(vegHt), length.out = 50)) %>%
+  mutate(n = "n=60")
+colnames(psi.60a.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "wetland", "n") 
+
+psi.40a.plot <-
+  data.frame(
+    psi.40a,
+    time = seq(min(vegHt), max(vegHt), length.out = 50)) %>%
+  mutate(n = "n=40")
+colnames(psi.40a.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "wetland", "n")
+
+runA_compare.psi.plot <- psi.60a.plot %>%
+  bind_rows(psi.40a.plot)
+
+true = data.frame(
+wetland = seq(min(vegHt),max(vegHt),length.out = 50)) %>%
+  mutate(true = 100*plogis(wetland*2 - 1.38))
+
+ggplot(runA_compare.psi.plot) +
+  geom_ribbon(aes(x = wetland, ymin = p2.75*100, ymax = p97.5*100, group = n),
+              fill = "firebrick",
+              alpha = 0.3) +
+  geom_ribbon(aes(x = wetland, ymin = p10*100, ymax = p90*100),
+              fill = "firebrick",
+              alpha = 0.3) +
+  geom_line(aes(x = wetland, y = p50*100), color = "firebrick", size = 2) +
+  geom_line(data = true, aes(x = wetland, y = true)) +
+  facet_wrap(~n) +
+  labs(x = "Wetlands in surrounding area", y = "Occupancy probability (%)") +
+  theme_bw() +
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+#ggsave("figures/tapaculo_psi_compare_trialA.png", width = 7, height = 5)
+```
+# Figure - p.time (60 and 40) - Trial B
+```{r}
+p.60b <- apply(tapaculo_60b$sims.list$p.time, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+p.40b <- apply(tapaculo_40b$sims.list$p.time, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+p.60b.plot <-
+  data.frame(
+    p.60b,
+    time = seq(min(wind1), max(wind1), length.out = 50)) %>%
+  mutate(n = "n=60")
+colnames(p.60b.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "timeofday", "n") 
+
+p.40b.plot <-
+  data.frame(
+    p.40b,
+    time = seq(min(wind1), max(wind1), length.out = 50)) %>%
+  mutate(n = "n=40")
+colnames(p.40b.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "timeofday", "n")
+
+runB_compare.plot <- p.60b.plot %>%
+  bind_rows(p.40b.plot)
+
+ggplot(runB_compare.plot) +
+  geom_ribbon(aes(x = timeofday, ymin = p2.75*100, ymax = p97.5*100, group = n),
+              fill = "steelblue",
+              alpha = 0.3) +
+  geom_ribbon(aes(x = timeofday, ymin = p10*100, ymax = p90*100),
+              fill = "steelblue",
+              alpha = 0.3) +
+  geom_line(aes(x = timeofday, y = p50*100), color = "steelblue", size = 2) +
+  geom_line(data = true.p, aes(x = time, y = true)) +
+  facet_wrap(~n) +
+  labs(x = "Time", y = "Detection probability (%)") +
+  theme_bw() +
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+#ggsave("figures/tapaculo_p_compare_trialB.png", width = 7, height = 5)
+```
+# Figure - psi.wetland (n = 60 and 40) - Trial B
+```{r}
+psi.60b <- apply(tapaculo_60b$sims.list$psi.wetland, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+psi.40b <- apply(tapaculo_40b$sims.list$psi.wetland, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+psi.60b.plot <-
+  data.frame(
+    psi.60b,
+    time = seq(min(vegHt), max(vegHt), length.out = 50)) %>%
+  mutate(n = "n=60")
+colnames(psi.60b.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "wetland", "n") 
+
+psi.40b.plot <-
+  data.frame(
+    psi.40b,
+    time = seq(min(vegHt), max(vegHt), length.out = 50)) %>%
+  mutate(n = "n=40")
+colnames(psi.40b.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "wetland", "n")
+
+runB_compare.psi.plot <- psi.60b.plot %>%
+  bind_rows(psi.40b.plot)
+
+ggplot(runB_compare.psi.plot) +
+  geom_ribbon(aes(x = wetland, ymin = p2.75*100, ymax = p97.5*100, group = n),
+              fill = "firebrick",
+              alpha = 0.3) +
+  geom_ribbon(aes(x = wetland, ymin = p10*100, ymax = p90*100),
+              fill = "firebrick",
+              alpha = 0.3) +
+  geom_line(aes(x = wetland, y = p50*100), color = "firebrick", size = 2) +
+  geom_line(data = true, aes(x = wetland, y = true)) +
+  facet_wrap(~n) +
+  labs(x = "Wetlands in surrounding area", y = "Occupancy probability (%)") +
+  theme_bw() +
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+#ggsave("figures/tapaculo_psi_compare_trialB.png", width = 7, height = 5)
+```
+# Figure - p.time (60 and 40) - Trial C
+```{r}
+p.60c <- apply(tapaculo_60c$sims.list$p.time, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+p.40c <- apply(tapaculo_40c$sims.list$p.time, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+p.60c.plot <-
+  data.frame(
+    p.60c,
+    time = seq(min(wind1), max(wind1), length.out = 50)) %>%
+  mutate(n = "n=60")
+colnames(p.60c.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "timeofday", "n") 
+
+p.40c.plot <-
+  data.frame(
+    p.40c,
+    time = seq(min(wind1), max(wind1), length.out = 50)) %>%
+  mutate(n = "n=40")
+colnames(p.40c.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "timeofday", "n")
+
+runC_compare.plot <- p.60c.plot %>%
+  bind_rows(p.40c.plot)
+
+ggplot(runC_compare.plot) +
+  geom_ribbon(aes(x = timeofday, ymin = p2.75*100, ymax = p97.5*100, group = n),
+              fill = "steelblue",
+              alpha = 0.3) +
+  geom_ribbon(aes(x = timeofday, ymin = p10*100, ymax = p90*100),
+              fill = "steelblue",
+              alpha = 0.3) +
+  geom_line(aes(x = timeofday, y = p50*100), color = "steelblue", size = 2) +
+  geom_line(data = true.p, aes(x = time, y = true)) +
+  facet_wrap(~n) +
+  labs(x = "Time", y = "Detection probability (%)") +
+  theme_bw() +
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+#ggsave("figures/tapaculo_p_compare_trialC.png", width = 7, height = 5)
+```
+# Figure - psi.wetland (n = 60 and 40) - Trial C
+```{r}
+psi.60c <- apply(tapaculo_60c$sims.list$psi.wetland, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+psi.40c <- apply(tapaculo_40c$sims.list$psi.wetland, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+psi.60c.plot <-
+  data.frame(
+    psi.60c,
+    time = seq(min(vegHt), max(vegHt), length.out = 50)) %>%
+  mutate(n = "n=60")
+colnames(psi.60c.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "wetland", "n") 
+
+psi.40c.plot <-
+  data.frame(
+    psi.40c,
+    time = seq(min(vegHt), max(vegHt), length.out = 50)) %>%
+  mutate(n = "n=40")
+colnames(psi.40c.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "wetland", "n")
+
+runC_compare.psi.plot <- psi.60c.plot %>%
+  bind_rows(psi.40c.plot)
+
+ggplot(runC_compare.psi.plot) +
+  geom_ribbon(aes(x = wetland, ymin = p2.75*100, ymax = p97.5*100, group = n),
+              fill = "firebrick",
+              alpha = 0.3) +
+  geom_ribbon(aes(x = wetland, ymin = p10*100, ymax = p90*100),
+              fill = "firebrick",
+              alpha = 0.3) +
+  geom_line(aes(x = wetland, y = p50*100), color = "firebrick", size = 2) +
+  geom_line(data = true, aes(x = wetland, y = true)) +
+  facet_wrap(~n) +
+  labs(x = "Wetlands in surrounding area", y = "Occupancy probability (%)") +
+  theme_bw() +
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+#ggsave("figures/tapaculo_psi_compare_trialC.png", width = 7, height = 5)
+```
+# Figure - p.time (60 and 40) - Trial D
+```{r}
+p.60d <- apply(tapaculo_60d$sims.list$p.time, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+p.40d <- apply(tapaculo_40d$sims.list$p.time, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+p.60d.plot <-
+  data.frame(
+    p.60d,
+    time = seq(min(wind1), max(wind1), length.out = 50)) %>%
+  mutate(n = "n=60")
+colnames(p.60d.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "timeofday", "n") 
+
+p.40d.plot <-
+  data.frame(
+    p.40d,
+    time = seq(min(wind1), max(wind1), length.out = 50)) %>%
+  mutate(n = "n=40")
+colnames(p.40d.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "timeofday", "n")
+
+runD_compare.plot <- p.60d.plot %>%
+  bind_rows(p.40d.plot)
+
+ggplot(runD_compare.plot) +
+  geom_ribbon(aes(x = timeofday, ymin = p2.75*100, ymax = p97.5*100, group = n),
+              fill = "steelblue",
+              alpha = 0.3) +
+  geom_ribbon(aes(x = timeofday, ymin = p10*100, ymax = p90*100),
+              fill = "steelblue",
+              alpha = 0.3) +
+  geom_line(aes(x = timeofday, y = p50*100), color = "steelblue", size = 2) +
+  geom_line(data = true.p, aes(x = time, y = true)) +
+  facet_wrap(~n) +
+  labs(x = "Time", y = "Detection probability (%)") +
+  theme_bw() +
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+#ggsave("figures/tapaculo_p_compare_trialD.png", width = 7, height = 5)
+```
+# Figure - psi.wetland (n = 60 and 40) - Trial D
+```{r}
+psi.60d <- apply(tapaculo_60d$sims.list$psi.wetland, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+psi.40d <- apply(tapaculo_40d$sims.list$psi.wetland, 2, function(x) quantile(x, c(0.0275, 0.1, 0.5, 0.9, 0.975))) %>%
+  t() %>%
+  as.data.frame()
+
+psi.60d.plot <-
+  data.frame(
+    psi.60d,
+    time = seq(min(vegHt), max(vegHt), length.out = 50)) %>%
+  mutate(n = "n=60")
+colnames(psi.60d.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "wetland", "n") 
+
+psi.40d.plot <-
+  data.frame(
+    psi.40d,
+    time = seq(min(vegHt), max(vegHt), length.out = 50)) %>%
+  mutate(n = "n=40")
+colnames(psi.40d.plot) <- c("p2.75", "p10", "p50", "p90", "p97.5", "wetland", "n")
+
+runD_compare.psi.plot <- psi.60d.plot %>%
+  bind_rows(psi.40d.plot)
+
+ggplot(runD_compare.psi.plot) +
+  geom_ribbon(aes(x = wetland, ymin = p2.75*100, ymax = p97.5*100, group = n),
+              fill = "firebrick",
+              alpha = 0.3) +
+  geom_ribbon(aes(x = wetland, ymin = p10*100, ymax = p90*100),
+              fill = "firebrick",
+              alpha = 0.3) +
+  geom_line(aes(x = wetland, y = p50*100), color = "firebrick", size = 2) +
+  geom_line(data = true, aes(x = wetland, y = true)) +
+  facet_wrap(~n) +
+  labs(x = "Wetlands in surrounding area", y = "Occupancy probability (%)") +
+  theme_bw() +
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15))
+#ggsave("figures/tapaculo_psi_compare_trialD.png", width = 7, height = 5)
+```

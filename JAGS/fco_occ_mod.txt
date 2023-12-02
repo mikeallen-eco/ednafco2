@@ -1,0 +1,34 @@
+
+model {
+
+# Priors
+mean.p ~ dunif(0, 1)          # Detection intercept on prob. scale
+alpha0 <- logit(mean.p)       #   same on logit scale
+mean.psi ~ dunif(0, 1)        # Occupancy intercept on prob. scale
+beta0 <- logit(mean.psi)      #   same on logit scale
+for(k in 1:1){                # 1:K terms in detection model
+   alpha[k] ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+}
+for(k in 1:1){               # 1:K terms in occupancy model
+   beta[k] ~ dnorm(0, 0.1)    # Covariates on logit(occupancy)
+}
+
+# Likelihood
+for (i in 1:M) {
+  z[i] ~ dbern(psi[i])
+  logit(psi[i]) <- beta0 + inprod(beta[], occDM[i,])  
+   for (j in 1:J) {
+      y[i,j] ~ dbern(z[i] * p[i,j]) 
+      logit(p[i,j]) <- alpha0 +     # detection (p) intercept
+         inprod(alpha[], occDM[i,])    
+   }
+}
+
+p.y1 <- mean.p
+logit(p.y2) <- alpha0 + alpha[1]
+
+psi.y1 <- mean.psi
+logit(psi.y2) <- beta0 + beta[1]
+
+}
+
