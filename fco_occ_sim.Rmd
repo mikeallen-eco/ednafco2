@@ -2,6 +2,7 @@
 ```{r}
 library(dplyr)
 library(ggplot2)
+source("R/sampsim_function.R")
 ```
 # specify the model
 ```{r}
@@ -43,135 +44,52 @@ logit(psi.y2) <- beta0 + beta[1]
 sink()
 ```
 
-# SIMULATE 1 YEAR OF 3-VISIT DETECTION / NON-DETECTION AT n.sites SITES
+# SIMULATE 1 YEAR OF J-VISIT DETECTION / NON-DETECTION AT n.sites SITES
 WITH ONE COVARIATE FOR PSI AND ONE FOR P
 ```{r}
-
-sampsim <- function(n.sites = 50, J = 3, psi.y1, chg, chgdir, p0, p.chg, p.chgdir, seed = 100,
-                    iter = 10000, thin = 5, chains = 3, n.warmup = 2000) {
-  
-# Choose sample sizes and prepare obs. data array y
-# n.sites <- 60                      # Number of sites
-# J <-  3                        # Number of presence/absence measurements
-# psi.y1 <- 0.2 # psi intercept on probability scale (psi when covariates = 0)
-# chg <- 0.1 # psi change from year 1 to year 2 (= inverse logit beta1)
-# chgdir <- -1 # -1, 0, or 1 for decrease, no change, or increase
-# p0 <- 0.4 # mean detection probability in Allen et al., Sci. Reports. (2023); range: .1-.7
-# p.chg <- 0 # p change from year 1 to year 2 (= inverse logit alpha1)
-# p.chgdir <- 0 # -1, 0, or 1 for decrease, no change, or increase
-# seed = 440
-# ni <- 20000   ;   nt <- 10   ;   nb <- 10000   ;   nc <- 3
-
-message(paste0("Starting iteration ", i, "..."))
-
-# set up total number of rows (sites x years)
-n.sites2 <- n.sites*2
-
-# set up matrix for detection/non-detection data
-y1 <-
-  matrix(NA, nrow = n.sites2, ncol = J) # to contain the obs. data, year 1
-
-# Create a covariate called per
-set.seed(seed)
-year <- c(rep(0, n.sites), rep(1, n.sites)) 
-# runif(n.sites,-1, 1)
-
-# Choose parameter values for occupancy model and compute occupancy
-beta0 <- log(psi.y1/(1-psi.y1))   # prob that a site occupied in year 1; Logit-scale intercept
-beta1 <- log(chg/(1-chg))
-psi <- (plogis(beta0) + chgdir*plogis(beta1)*year) # Occupancy probability
-# plot(vegHt, psi, ylim = c(0,1), lwd = 3) # Plot psi relationship
-
-# Now visit each site and observe presence/absence perfectly
-set.seed(seed+50)
-z1 <- rbinom(n.sites2, 1, psi)     
-    # True presence/absence year 1 & 2
-
-# Look at data so far
-table(z1[1:n.sites])
-
-table(z1[n.sites:(2*n.sites)])
-
-# # Create a covariate called wind
-# set.seed(560)
-# wind1 <- array(runif(n.sites * J,-1, 1), dim = c(n.sites, J))
-
-# Choose parameter values for measurement error model and compute detectability
-alpha0 <- log(p0/(1-p0))                        # Logit-scale intercept
-alpha1 <- log(p.chg/(1-p.chg))        # Logit-scale slope for p cov
-if(is.na(alpha1)){alpha1 <- 0}
-
-p1 <- (plogis(alpha0) + p.chgdir*plogis(alpha1)*year) # Detection probability
-
-#plot(p1 ~ wind1, ylim = c(0,1))     # Look at relationship
-
-# Take J presence/absence measurements at each site in each year
-set.seed(seed)
-for (j in 1:J) {
-  y1[, j] <- rbinom(n.sites2, z1, p1[j])
-}
-
-# look at proportion of observed presence / number of sites
-sum(apply(y1, 1, max)) / n.sites2
-
-# FORMAT DATA FOR SINGLE SEASON OCCUPANCY MODEL
-
-# Create design matrix for occupancy covariates and look at it
-occDM_t <- model.matrix(~ 1 + year)[,-1] # Drop first col.
-
-y = y1
-
-# Bundle and summarize data set
-win.data_t <- list(y = y, M = nrow(y), J = ncol(y), occDM = as.data.frame(occDM_t))
-
-# Inits
-inits <- function(){list(z = apply(y, 1, max, na.rm = T), mean.psi = runif(1), mean.p = runif(1), alpha = c(-2) + rnorm(1), beta = (c(2)+rnorm(1)))}
-
-# Parameters monitored
-params <- c("alpha0", "alpha", "beta0", "beta", "psi.y1", "psi.y2", "p.y1", "p.y2")
-
-# MCMC settings
-# ni <- 20000   ;   nt <- 10   ;   nb <- 10000   ;   nc <- 3
-ni <- iter; nt <- thin; nc <- chains
-
-# Call JAGS from R and summarize posteriors
-mod <- jagsUI::jags(win.data_t, inits, params, "JAGS/fco_occ_mod.txt", 
-                    n.chains = nc, n.thin = nt, n.iter = ni, 
-                    n.adapt = n.warmup, parallel = TRUE, verbose = F)
-# jagsUI::traceplot(mod)
-
-message(paste0("psi.y1 = ", round(mod$mean$psi.y1,3), ". psi.y2 = ", 
-               round(mod$mean$psi.y2,3), ". maxRhat = ", round(max(bind_rows(mod$Rhat)),3)))
-return(mod)
-
-}
 
 psi.y1.list <- list()
 psi.y2.list <- list()
 max.Rhat.list <- list()
+biglist <- list()
 
-for (i in 1:10) {
-mod <- sampsim(n.sites = 500, J = 4, psi.y1 = 0.5, chg = 0.15, chgdir = -1, 
+for(j in seq(50, 1000, by = 50)) {
+for (i in 1:100) {
+message(paste0(j, " sites..."))
+mod <- sampsim(n.sites = j, J = 3, psi.y1 = 0.5, chg = 0.15, chgdir = -1, 
                p0 = 0.4, p.chg = 0, p.chgdir = 0, seed = 100+i,
                iter = 5000)
 psi.y1.list[[i]] <- data.frame(psi.y1 = mod$sims.list$psi.y1)
-psi.y2.list[[i]] <- data.frame(psi.y2 = mod$sims.list$psi.y2)
-max.Rhat.list[[i]] <- data.frame(max.Rhat = max(do.call(rbind, mod$Rhat)))
+psi.y2.list[[i]] <- data.frame(psi.y2 = mod$sims.list$psi.y2, 
+                               sites = j, max.Rhat = max(do.call(rbind, mod$Rhat)))
 }
 
+# put iterations in a dataframe and save to big list
 df <- data.frame(
-psi.y1.df = bind_rows(psi.y1.list),
-psi.y2.df = bind_rows(psi.y2.list),
-max.Rhat.df = bind_rows(max.Rhat.list)
+psi.y1 = bind_rows(psi.y1.list)[,1],
+psi.y2 = bind_rows(psi.y2.list)[,1],
+sites = bind_rows(psi.y2.list)[,2],
+max.Rhat = bind_rows(psi.y2.list)[,3]
 ) %>%
   mutate(chg = psi.y2-psi.y1)
 
-hist(df$chg)
-quantile(df$chg, c(0.05, 0.5, 0.95))
-quantile(df$psi.y1, c(0.05, 0.5, 0.95))
-quantile(df$psi.y2, c(0.05, 0.5, 0.95))
+biglist[[j]] <- df
+
+}
+
+df_final <- bind_rows(biglist)
+
+saveRDS(df_final, "output/df_J3_psi0.5_p0.4_chg0.15.rds")
+
+df_final <- readRDS("output/df_J4_psi0.5_p0.4_chg0.15.rds")
+quantile(df_final$chg, c(0.05, 0.5, 0.95))
+quantile(df_final$psi.y1, c(0.05, 0.5, 0.95))
+quantile(df_final$psi.y2, c(0.05, 0.5, 0.95))
+
 
 ```
+√ [p (1-p) / n)] # SE of proportion
+√ [p1(1-p1)/n1 + p2(1-p2)/n2] # SE of difference between 2 proportions
 
 # Figure - p.time (60 and 40) - Trial A
 ```{r}
