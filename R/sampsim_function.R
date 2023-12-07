@@ -1,6 +1,6 @@
 # function to simulate occupancy / detection data and run a site-occupancy model
 sampsim <- function(n.sites = 50, J = 3, psi.y1, chg, chgdir, p0, p.chg, p.chgdir, seed = 100,
-                    iter = 10000, thin = 5, chains = 3, n.warmup = 2000) {
+                    iter = 5000, thin = 5, chains = 3, n.warmup = 2000) {
   
   # Choose sample sizes and prepare obs. data array y
   # n.sites <- 60                      # Number of sites

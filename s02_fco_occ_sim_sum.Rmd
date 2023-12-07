@@ -1,0 +1,227 @@
+# libraries
+```{r}
+library(dplyr)
+library(ggplot2)
+chg15.J4 <- readRDS("output/df_J4_psi0.5_p0.4_chg0.15.rds")
+chg15.J3 <- readRDS("output/df_J3_psi0.5_p0.4_chg0.15.rds") 
+chg30.J4 <- readRDS("output/df_J4_psi0.5_p0.4_chg0.30.rds")
+chg30.J3 <- readRDS("output/df_J3_psi0.5_p0.4_chg0.30.rds") 
+```
+# Summarizing runs (15 and 30 percentage point declines)
+```{r}
+####
+# Summarizing runs (15 percentage point decline)
+####
+
+# create variable for "run" number
+run = lapply(1:2000, FUN = function(x) rep(x, 3000)) %>%
+  do.call(c, .) %>%
+  as.data.frame() %>%
+  rename(run = 1)
+
+# load saved run output
+df_finalJ4 <- chg15.J4 %>%
+  mutate(J = 4, 
+         run = run$run,
+         dec = 15)
+
+df_finalJ3 <- chg15.J3 %>%
+  mutate(J = 3, 
+         run = run$run,
+         dec = 15)
+
+# summarize 90% quantiles by run
+df_final.sumJ3 <- split(df_finalJ3, f = df_finalJ3$run) %>% 
+  lapply(X = ., FUN = function(x) {
+    psi.y1 <- t(quantile(x$psi.y1, c(0.05, 0.95)))
+    psi.y2 <- t(quantile(x$psi.y2, c(0.05, 0.95)))
+    chg <- t(quantile(x$chg, c(0.05, 0.95)))
+    info <- data.frame(sites = x$sites[1],
+                       J = x$J[1],
+                       max.Rhat = x$max.Rhat[1],
+                       dec = 15)
+    df <- cbind(info, psi.y1, psi.y2, chg) %>%
+      rename(psi.y1.10 = 5, psi.y1.90 = 6, psi.y2.10 = 7, psi.y2.90 = 8,
+             chg.10 = 9, chg.90 = 10) %>%
+      mutate(detect = ifelse(chg.90 < 0, 1, 0))
+    return(df)
+  }
+  ) %>%
+  bind_rows()
+
+df_final.sumJ4 <- split(df_finalJ4, f = df_finalJ4$run) %>% 
+  lapply(X = ., FUN = function(x) {
+    psi.y1 <- t(quantile(x$psi.y1, c(0.05, 0.95)))
+    psi.y2 <- t(quantile(x$psi.y2, c(0.05, 0.95)))
+    chg <- t(quantile(x$chg, c(0.05, 0.95)))
+    info <- data.frame(sites = x$sites[1],
+                       J = x$J[1],
+                       max.Rhat = x$max.Rhat[1],
+                       dec = 15)
+    df <- cbind(info, psi.y1, psi.y2, chg) %>%
+      rename(psi.y1.10 = 5, psi.y1.90 = 6, psi.y2.10 = 7, psi.y2.90 = 8,
+             chg.10 = 9, chg.90 = 10) %>%
+      mutate(detect = ifelse(chg.90 < 0, 1, 0))
+    return(df)
+  }
+  ) %>%
+  bind_rows()
+
+df_final_sum.15 <- bind_rows(df_final.sumJ3, df_final.sumJ4) %>%
+  mutate(chg.CI.width = chg.90-chg.10)
+rm(df_final.sumJ3, df_final.sumJ4, df_finalJ3, df_finalJ4)
+
+####
+# Summarizing runs (30 percentage point decline)
+####
+
+# load saved run output
+df_finalJ4.30 <- chg30.J4 %>%
+  mutate(J = 4, 
+         run = run$run,
+         dec = 30)
+
+df_finalJ3.30 <- chg30.J3 %>%
+  mutate(J = 3, 
+         run = run$run)
+
+rm(run)
+
+# summarize 90% quantiles by run
+df_final.sumJ3.30 <- split(df_finalJ3.30, f = df_finalJ3.30$run) %>% 
+  lapply(X = ., FUN = function(x) {
+    psi.y1 <- t(quantile(x$psi.y1, c(0.05, 0.95)))
+    psi.y2 <- t(quantile(x$psi.y2, c(0.05, 0.95)))
+    chg <- t(quantile(x$chg, c(0.05, 0.95)))
+    info <- data.frame(sites = x$sites[1],
+                       J = x$J[1],
+                       max.Rhat = x$max.Rhat[1],
+                       dec = 30)
+    df <- cbind(info, psi.y1, psi.y2, chg) %>%
+      rename(psi.y1.10 = 5, psi.y1.90 = 6, psi.y2.10 = 7, psi.y2.90 = 8,
+             chg.10 = 9, chg.90 = 10) %>%
+      mutate(detect = ifelse(chg.90 < 0, 1, 0))
+    return(df)
+  }
+  ) %>%
+  bind_rows()
+
+df_final.sumJ4.30 <- split(df_finalJ4.30, f = df_finalJ4.30$run) %>% 
+  lapply(X = ., FUN = function(x) {
+    psi.y1 <- t(quantile(x$psi.y1, c(0.05, 0.95)))
+    psi.y2 <- t(quantile(x$psi.y2, c(0.05, 0.95)))
+    chg <- t(quantile(x$chg, c(0.05, 0.95)))
+    info <- data.frame(sites = x$sites[1],
+                       J = x$J[1],
+                       max.Rhat = x$max.Rhat[1],
+                       dec = 30)
+    df <- cbind(info, psi.y1, psi.y2, chg) %>%
+      rename(psi.y1.10 = 5, psi.y1.90 = 6, psi.y2.10 = 7, psi.y2.90 = 8,
+             chg.10 = 9, chg.90 = 10) %>%
+      mutate(detect = ifelse(chg.90 < 0, 1, 0))
+    return(df)
+  }
+  ) %>%
+  bind_rows()
+
+df_final_sum.30 <- bind_rows(df_final.sumJ3.30, df_final.sumJ4.30) %>%
+  mutate(chg.CI.width = chg.90-chg.10)
+rm(df_final.sumJ3.30, df_final.sumJ4.30, df_finalJ3.30, df_finalJ4.30)
+
+df_final_sum <- bind_rows(df_final_sum.15, df_final_sum.30)
+```
+
+# plot trend detection probability by sample size
+things that affect power: psi, p, J, sites, magnitude of change, level of certainty (90% or 95% CI)
+```{r}
+df_final_sum %>%
+  filter(max.Rhat < 1.1) %>%
+  mutate(dec2 = case_when(dec==15 ~ "15 point decline\n(50% to 35% occupancy)",
+                          TRUE ~ "30 point decline\n(50% to 20% occupancy)")) %>%
+         # ,
+         # order = case_when(dec==15 ~ "A",
+         #                  TRUE ~ "B"),
+         # dec3 = forcats::fct_reorder(.f = as.factor(dec2), order, mean)) %>%
+ggplot() +
+  geom_smooth(aes(x = sites, y = detect, color = as.factor(J)),
+              method="glm",
+    method.args=list(family="binomial")) +
+  geom_hline(yintercept = 0.99, color = "darkgray", linetype = 2) +
+  geom_hline(yintercept = 0.95, color = "darkgray", linetype = 2) +
+  scale_color_manual(values = c("firebrick", "darkblue")) +
+  scale_x_continuous(breaks = seq(0,800,by = 100), limits = c(0,800)) +
+  facet_wrap(~dec2) +
+  labs(x = "Number of sampling sites",
+       y = "Probability of detecting a\ndecline in occupancy",
+       color = "Subsamples") +
+  theme_bw() +
+  theme(text = element_text(size = 12),
+        legend.position = c(0.9,0.2))
+
+ggsave("figures/prob_detecting_decline_psi0.5_0.35_0.20_p0.4_J3_J4_90CI.png", 
+       dpi = 400, width = 8, height = 4)
+
+```
+# plot CI width by sample size
+things that affect power: psi, p, J, sites, magnitude of change, level of certainty (90% or 95% CI)
+```{r}
+df_final_sum %>%
+  filter(max.Rhat < 1.1) %>%
+  mutate(Jcat = case_when(J==3 ~ "3 subsamples",
+                          TRUE ~ "4 subsamples")) %>%
+ggplot() +
+  geom_boxplot(aes(x = as.factor(sites), y = chg.CI.width, color = Jcat),
+             alpha = 0.5) +
+  scale_color_manual(values = c("firebrick", "darkblue")) +
+  scale_y_continuous(breaks = seq(0,0.95,by = .1)) +
+  # scale_x_continuous(breaks = seq(0,1000,by = 200)) +
+  facet_wrap(~Jcat) +
+  guides(color = "none") +
+  labs(x = "Number of sampling sites",
+       y = "90% CI width of decline estimate\n(50% to 35% occupancy)") +
+  theme_bw() +
+  theme(text = element_text(size = 12)) +
+  coord_flip()
+
+ggsave("figures/decline_CI_width_psi0.5_0.35_p0.4_J3_J4_90CI.png", dpi = 400, width = 6, height = 5)
+
+```
+# plot CI width of psi by sample size
+things that affect power: psi, p, J, sites, magnitude of change, level of certainty (90% or 95% CI)
+```{r}
+y1 <- df_final_sum %>%
+  select(sites:psi.y1.90) %>%
+  mutate(CIwidth = psi.y1.90-psi.y1.10,
+         psi = "Occupancy = 50%") %>%
+  select(-psi.y1.10, -psi.y1.90)
+
+y2 <- df_final_sum %>%
+  select(sites:max.Rhat,psi.y2.10, psi.y2.90) %>%
+  mutate(CIwidth = psi.y2.90-psi.y2.10,
+         psi = "Occupancy = 35%") %>%
+  select(-psi.y2.10, -psi.y2.90)
+  
+CIwidth = bind_rows(y1, y2)
+
+CIwidth %>%
+filter(max.Rhat < 1.1) %>%
+  mutate(Jcat = case_when(J==3 ~ "3 subsamples",
+                          TRUE ~ "4 subsamples")) %>%
+ggplot() +
+  geom_boxplot(aes(x = as.factor(sites), y = CIwidth, color = Jcat),
+             alpha = 0.5) +
+  scale_color_manual(values = c("firebrick", "darkblue")) +
+  scale_y_continuous(breaks = seq(0,0.9,by = .1), limits = c(0,0.85)) +
+  facet_wrap(~psi+Jcat) +
+  labs(x = "Number of sampling sites",
+       y = "90% CI width for occupancy",
+       color = "Subsamples") +
+  theme_bw() +
+  theme(text = element_text(size = 12)) +
+  guides(color = "none") +
+  coord_flip()
+
+ggsave("figures/psi_CI_width_psi0.5_0.35_p0.4_J3_J4_90CI_box.png", dpi = 400, width = 7, height = 7)
+
+```
+
