@@ -166,7 +166,8 @@ ggsave("figures/prob_detecting_decline_psi0.5_0.35_0.20_p0.4_J3_J4_90CI.png",
 things that affect power: psi, p, J, sites, magnitude of change, level of certainty (90% or 95% CI)
 ```{r}
 df_final_sum %>%
-  filter(max.Rhat < 1.1) %>%
+  filter(max.Rhat < 1.1,
+         dec == 15)%>%
   mutate(Jcat = case_when(J==3 ~ "3 subsamples",
                           TRUE ~ "4 subsamples")) %>%
 ggplot() +
@@ -183,25 +184,34 @@ ggplot() +
   theme(text = element_text(size = 12)) +
   coord_flip()
 
-ggsave("figures/decline_CI_width_psi0.5_0.35_p0.4_J3_J4_90CI.png", dpi = 400, width = 6, height = 5)
+# ggsave("figures/decline_CI_width_psi0.5_0.35_p0.4_J3_J4_90CI.png", dpi = 400, width = 6, height = 5)
 
 ```
 # plot CI width of psi by sample size
 things that affect power: psi, p, J, sites, magnitude of change, level of certainty (90% or 95% CI)
 ```{r}
 y1 <- df_final_sum %>%
+  filter(dec == 15) %>%
   select(sites:psi.y1.90) %>%
   mutate(CIwidth = psi.y1.90-psi.y1.10,
          psi = "Occupancy = 50%") %>%
   select(-psi.y1.10, -psi.y1.90)
 
 y2 <- df_final_sum %>%
+  filter(dec == 15) %>%
   select(sites:max.Rhat,psi.y2.10, psi.y2.90) %>%
   mutate(CIwidth = psi.y2.90-psi.y2.10,
          psi = "Occupancy = 35%") %>%
   select(-psi.y2.10, -psi.y2.90)
+
+y3 <- df_final_sum %>%
+  filter(dec == 30) %>%
+  select(sites:max.Rhat,psi.y2.10, psi.y2.90) %>%
+  mutate(CIwidth = psi.y2.90-psi.y2.10,
+         psi = "Occupancy = 20%") %>%
+  select(-psi.y2.10, -psi.y2.90)
   
-CIwidth = bind_rows(y1, y2)
+CIwidth = bind_rows(y1, y2, y3)
 
 CIwidth %>%
 filter(max.Rhat < 1.1) %>%
@@ -212,7 +222,7 @@ ggplot() +
              alpha = 0.5) +
   scale_color_manual(values = c("firebrick", "darkblue")) +
   scale_y_continuous(breaks = seq(0,0.9,by = .1), limits = c(0,0.85)) +
-  facet_wrap(~psi+Jcat) +
+  facet_wrap(~psi+Jcat, nrow = 3) +
   labs(x = "Number of sampling sites",
        y = "90% CI width for occupancy",
        color = "Subsamples") +
@@ -221,7 +231,8 @@ ggplot() +
   guides(color = "none") +
   coord_flip()
 
-ggsave("figures/psi_CI_width_psi0.5_0.35_p0.4_J3_J4_90CI_box.png", dpi = 400, width = 7, height = 7)
+ggsave("figures/psi_CI_width_psi0.5_0.35_0.2_p0.4_J3_J4_90CI_box.png", 
+       dpi = 400, width = 7, height = 9.5)
 
 ```
 
